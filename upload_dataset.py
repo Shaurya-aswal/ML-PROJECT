@@ -2,6 +2,7 @@ import pandas as pd
 from sqlalchemy import create_engine
 from urllib.parse import quote_plus
 
+
 password = quote_plus("aswal@29")
 
 engine = create_engine(
@@ -18,3 +19,5 @@ df.to_sql(
 )
 
 print("Dataset uploaded successfully!")
+
+
