@@ -180,4 +180,4 @@ jupyter notebook nyc_taxi_trip_duration.ipynb
 
 **Shaurya**  
 B.Tech Computer Science — Maharaja Surajmal Institute of Technology, Delhi  
-[GitHub](https://github.com/YOUR_USERNAME) · [LinkedIn](https://linkedin.com/in/YOUR_PROFILE)
+[GitHub](https://github.com/Shaurya-aswal) · [LinkedIn](https://www.linkedin.com/in/shauryaaswal/)
