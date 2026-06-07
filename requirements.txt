@@ -4,3 +4,6 @@ scikit-learn
 pymysql
 mysql-connector-python
 python-dotenv
+seaborn
+matplotlib
+lightgbm 
