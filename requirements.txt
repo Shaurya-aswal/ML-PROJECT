@@ -9,3 +9,5 @@ matplotlib
 lightgbm
 xgboost
 catboost
+mlflow
+dagshub

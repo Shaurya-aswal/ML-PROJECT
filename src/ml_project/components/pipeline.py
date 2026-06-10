@@ -22,7 +22,7 @@ import joblib
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import FunctionTransformer
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import (mean_squared_error,mean_absolute_error,r2_score)
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from lightgbm import LGBMRegressor
 
 warnings.filterwarnings("ignore")
@@ -30,26 +30,37 @@ warnings.filterwarnings("ignore")
 # ----------------------------------------------------------------
 #  CONFIG
 # ----------------------------------------------------------------
-SEED       = 42
-TEST_SIZE  = 0.2
+SEED = 42
+TEST_SIZE = 0.2
 MODEL_PATH = "/Users/apple/ML PROJECT /artifacts/nyc_taxi_pipeline.pkl"
 
-NYC_LAT    = (40.63,  40.85)
-NYC_LON    = (-74.05, -73.75)
+NYC_LAT = (40.63, 40.85)
+NYC_LON = (-74.05, -73.75)
 
 FINAL_FEATURES = [
     # raw numeric
-    "vendor_id", "passenger_count",
-    "pickup_longitude",  "pickup_latitude",
-    "dropoff_longitude", "dropoff_latitude",
+    "vendor_id",
+    "passenger_count",
+    "pickup_longitude",
+    "pickup_latitude",
+    "dropoff_longitude",
+    "dropoff_latitude",
     # datetime features
-    "hour", "day_of_week", "month",
-    "day_of_month", "week_of_year",
-    "is_weekend", "is_rush_hour", "is_night",
+    "hour",
+    "day_of_week",
+    "month",
+    "day_of_month",
+    "week_of_year",
+    "is_weekend",
+    "is_rush_hour",
+    "is_night",
     # spatial features
-    "distance_km", "direction",
-    "delta_lat", "delta_lon",
-    "manhattan_dist", "zero_distance",
+    "distance_km",
+    "direction",
+    "delta_lat",
+    "delta_lon",
+    "manhattan_dist",
+    "zero_distance",
     # encoded categorical
     "store_and_fwd_flag",
 ]
@@ -60,6 +71,7 @@ FINAL_FEATURES = [
 #  Each function takes a DataFrame and returns a DataFrame.
 #  These are plain functions — no classes needed.
 # ================================================================
+
 
 # ----------------------------------------------------------------
 #  FUNCTION 1 — drop_useless_columns
@@ -80,14 +92,13 @@ def extract_datetime_features(X: pd.DataFrame) -> pd.DataFrame:
     dt = pd.to_datetime(df["pickup_datetime"])
 
     df["hour"] = dt.dt.hour
-    df["day_of_week"] = dt.dt.dayofweek        # 0=Mon … 6=Sun
+    df["day_of_week"] = dt.dt.dayofweek  # 0=Mon … 6=Sun
     df["month"] = dt.dt.month
     df["day_of_month"] = dt.dt.day
     df["week_of_year"] = dt.dt.isocalendar().week.astype(int)
     df["is_weekend"] = (df["day_of_week"] >= 5).astype(int)
     df["is_rush_hour"] = (
-        (df["is_weekend"] == 0) &
-        (df["hour"].isin([7, 8, 9, 16, 17, 18, 19]))
+        (df["is_weekend"] == 0) & (df["hour"].isin([7, 8, 9, 16, 17, 18, 19]))
     ).astype(int)
     df["is_night"] = df["hour"].isin([23, 0, 1, 2, 3, 4, 5]).astype(int)
 
@@ -112,18 +123,20 @@ def compute_spatial_features(X: pd.DataFrame) -> pd.DataFrame:
 
     dlat = lat2 - lat1
     dlon = lon2 - lon1
-    a    = np.sin(dlat / 2)**2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2)**2
+    a = np.sin(dlat / 2) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2) ** 2
 
     df["distance_km"] = R * 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
 
     # -- Bearing (direction of travel) --------------------------
-    df["direction"] = np.degrees(np.arctan2(
-        df["dropoff_latitude"]  - df["pickup_latitude"],
-        df["dropoff_longitude"] - df["pickup_longitude"],
-    ))
+    df["direction"] = np.degrees(
+        np.arctan2(
+            df["dropoff_latitude"] - df["pickup_latitude"],
+            df["dropoff_longitude"] - df["pickup_longitude"],
+        )
+    )
 
     # -- Raw coordinate differences -----------------------------
-    df["delta_lat"] = df["dropoff_latitude"]  - df["pickup_latitude"]
+    df["delta_lat"] = df["dropoff_latitude"] - df["pickup_latitude"]
     df["delta_lon"] = df["dropoff_longitude"] - df["pickup_longitude"]
 
     # -- Manhattan distance (sum of absolute deltas) ------------
@@ -154,6 +167,15 @@ def select_final_features(X: pd.DataFrame) -> pd.DataFrame:
     return X[FINAL_FEATURES]
 
 
+def apply_feature_transformations(X: pd.DataFrame) -> pd.DataFrame:
+    X = drop_useless_columns(X)
+    X = extract_datetime_features(X)
+    X = compute_spatial_features(X)
+    X = encode_categorical_features(X)
+    X = select_final_features(X)
+    return X
+
+
 # ================================================================
 #  BUILD PIPELINE
 #  Wraps each function with FunctionTransformer,
@@ -161,50 +183,45 @@ def select_final_features(X: pd.DataFrame) -> pd.DataFrame:
 #  with LGBMRegressor.
 # ================================================================
 def build_pipeline() -> Pipeline:
-    pipeline = Pipeline(steps=[
-
-        # Step 1 — drop id and dropoff_datetime
-        ("drop_columns",
-         FunctionTransformer(drop_useless_columns)),
-
-        # Step 2 — extract hour, day, month, flags from datetime
-        ("datetime_features",
-         FunctionTransformer(extract_datetime_features)),
-
-        # Step 3 — compute distance, bearing, delta coords
-        ("spatial_features",
-         FunctionTransformer(compute_spatial_features)),
-
-        # Step 4 — encode store_and_fwd_flag as 0/1
-        ("encode_categoricals",
-         FunctionTransformer(encode_categorical_features)),
-
-        # Step 5 — keep only the 21 final model features
-        ("select_features",
-         FunctionTransformer(select_final_features)),
-
-        # Step 6 — LightGBM regressor (predicts log_duration)
-        ("model", LGBMRegressor(
-            n_estimators      = 1000,
-            learning_rate     = 0.05,
-            num_leaves        = 63,
-            feature_fraction  = 0.8,
-            bagging_fraction  = 0.8,
-            bagging_freq      = 5,
-            min_child_samples = 20,
-            reg_alpha         = 0.1,
-            reg_lambda        = 0.1,
-            random_state      = SEED,
-            n_jobs            = -1,
-            verbose           = -1,
-        )),
-    ])
+    pipeline = Pipeline(
+        steps=[
+            # Step 1 — drop id and dropoff_datetime
+            ("drop_columns", FunctionTransformer(drop_useless_columns)),
+            # Step 2 — extract hour, day, month, flags from datetime
+            ("datetime_features", FunctionTransformer(extract_datetime_features)),
+            # Step 3 — compute distance, bearing, delta coords
+            ("spatial_features", FunctionTransformer(compute_spatial_features)),
+            # Step 4 — encode store_and_fwd_flag as 0/1
+            ("encode_categoricals", FunctionTransformer(encode_categorical_features)),
+            # Step 5 — keep only the 21 final model features
+            ("select_features", FunctionTransformer(select_final_features)),
+            # Step 6 — LightGBM regressor (predicts log_duration)
+            (
+                "model",
+                LGBMRegressor(
+                    n_estimators=1000,
+                    learning_rate=0.05,
+                    num_leaves=63,
+                    feature_fraction=0.8,
+                    bagging_fraction=0.8,
+                    bagging_freq=5,
+                    min_child_samples=20,
+                    reg_alpha=0.1,
+                    reg_lambda=0.1,
+                    random_state=SEED,
+                    n_jobs=-1,
+                    verbose=-1,
+                ),
+            ),
+        ]
+    )
     return pipeline
 
 
 # ================================================================
 #  HELPER FUNCTIONS  (outside pipeline — row-count changing ops)
 # ================================================================
+
 
 def load_data(path: str, sample: int = None) -> pd.DataFrame:
     """Load raw CSV. Optionally sample N rows for fast testing."""
@@ -231,12 +248,12 @@ def remove_outliers(df: pd.DataFrame) -> pd.DataFrame:
     print("=" * 55)
     before = len(df)
     mask = (
-        df["trip_duration"].between(60, 7200)     &   # 1 min – 2 hrs
-        df["passenger_count"].between(1, 6)        &   # valid passenger range
-        df["pickup_latitude"].between(*NYC_LAT)    &   # inside NYC
-        df["pickup_longitude"].between(*NYC_LON)   &
-        df["dropoff_latitude"].between(*NYC_LAT)   &
-        df["dropoff_longitude"].between(*NYC_LON)
+        df["trip_duration"].between(60, 7200)  # 1 min – 2 hrs
+        & df["passenger_count"].between(1, 6)  # valid passenger range
+        & df["pickup_latitude"].between(*NYC_LAT)  # inside NYC
+        & df["pickup_longitude"].between(*NYC_LON)
+        & df["dropoff_latitude"].between(*NYC_LAT)
+        & df["dropoff_longitude"].between(*NYC_LON)
     )
     df = df[mask].reset_index(drop=True)
     print(f"  Before  : {before:,}")
@@ -246,15 +263,16 @@ def remove_outliers(df: pd.DataFrame) -> pd.DataFrame:
 
 def prepare_target(df: pd.DataFrame):
     """
-    Log-transform target. Split into train/test.
+    Apply feature engineering, log-transform target, then split into train/test.
     Returns X_train, X_test, y_train, y_test.
     """
     print("\n" + "=" * 55)
     print("  PREPARE TARGET + SPLIT")
     print("=" * 55)
 
-    y = np.log1p(df["trip_duration"])           # log-transform — fixes right skew
-    X = df.drop(columns=["trip_duration"])       # keep all other cols for pipeline
+    y = np.log1p(df["trip_duration"])  # log-transform — fixes right skew
+    X = df.drop(columns=["trip_duration"])  # keep all other cols for pipeline
+    X = apply_feature_transformations(X)
 
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=TEST_SIZE, random_state=SEED
@@ -275,9 +293,9 @@ def evaluate(y_true_log, y_pred_log) -> dict:
     y_pred = np.expm1(np.clip(y_pred_log, 0, None))
 
     rmsle = np.sqrt(mean_squared_error(np.log1p(y_true), np.log1p(y_pred)))
-    rmse  = np.sqrt(mean_squared_error(y_true, y_pred))
-    mae   = mean_absolute_error(y_true, y_pred)
-    r2    = r2_score(y_true, y_pred)
+    rmse = np.sqrt(mean_squared_error(y_true, y_pred))
+    mae = mean_absolute_error(y_true, y_pred)
+    r2 = r2_score(y_true, y_pred)
 
     print(f"\n  {'Metric':<8}  Value")
     print(f"  {'-'*28}")
@@ -286,8 +304,12 @@ def evaluate(y_true_log, y_pred_log) -> dict:
     print(f"  {'MAE':<8}  {mae:.2f} sec  (~{mae/60:.1f} min avg error)")
     print(f"  {'R²':<8}  {r2:.4f}")
 
-    return {"RMSLE": round(rmsle,4), "RMSE": round(rmse,2),
-            "MAE": round(mae,2), "R2": round(r2,4)}
+    return {
+        "RMSLE": round(rmsle, 4),
+        "RMSE": round(rmse, 2),
+        "MAE": round(mae, 2),
+        "R2": round(r2, 4),
+    }
 
 
 def save_pipeline(pipeline, metrics: dict):
@@ -316,9 +338,10 @@ def predict_new(raw_df: pd.DataFrame) -> np.ndarray:
 # ================================================================
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data",   type=str, default="/Users/apple/ML PROJECT /notebook/data/raw_data.csv")
-    parser.add_argument("--sample", type=int, default=None,
-                        help="Subset rows for fast testing")
+    parser.add_argument(
+        "--data", type=str, default="/Users/apple/ML PROJECT /notebook/data/raw_data.csv"
+    )
+    parser.add_argument("--sample", type=int, default=None, help="Subset rows for fast testing")
     args = parser.parse_args()
 
     np.random.seed(SEED)
@@ -328,9 +351,9 @@ def main():
     print("█" * 55)
 
     # ── Pre-pipeline (these remove rows so must be outside) ──
-    df                                = load_data(args.data, args.sample)
-    df                                = remove_outliers(df)
-    X_train, X_test, y_train, y_test  = prepare_target(df)
+    df = load_data(args.data, args.sample)
+    df = remove_outliers(df)
+    X_train, X_test, y_train, y_test = prepare_target(df)
 
     # ── Build pipeline ───────────────────────────────────────
     print("\n" + "=" * 55)
@@ -362,9 +385,10 @@ def main():
 
     start = time.time()
     pipeline.fit(
-        X_train, y_train,
-        model__eval_set    = [(pipeline[:-1].transform(X_test), y_test)],
-        model__callbacks   = [
+        X_train,
+        y_train,
+        model__eval_set=[(pipeline[:-1].transform(X_test), y_test)],
+        model__callbacks=[
             __import__("lightgbm").early_stopping(50, verbose=True),
             __import__("lightgbm").log_evaluation(period=100),
         ],
@@ -373,7 +397,7 @@ def main():
 
     # ── Evaluate ─────────────────────────────────────────────
     y_pred_log = pipeline.predict(X_test)
-    metrics    = evaluate(y_test, y_pred_log)
+    metrics = evaluate(y_test, y_pred_log)
 
     # ── Save ─────────────────────────────────────────────────
     save_pipeline(pipeline, metrics)
