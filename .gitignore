@@ -220,5 +220,6 @@ __marimo__/
 
 
 .upload_dataset.py
-
+.prettierrc.json
 artifacts/*.csv
+pyproject.toml
